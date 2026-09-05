@@ -1,0 +1,9 @@
+# 构建产物(可重新生成, 不入库)
+build/
+*.o
+*.so
+*.a
+*.bin
+*.exe
+__pycache__/
+*.pyc
