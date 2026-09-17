@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>   // unordered_map 有自己的头文件(刚才靠 <map> 传递包含碰巧编过,不可靠)
 #include <queue>
 #include <algorithm>
 #include <numeric>
@@ -62,6 +63,22 @@ int main() {
     for (auto& p : freq) printf("[老写法] 词频 %s = %d\n", p.first.c_str(), p.second);
     // (3) 新写法(C++17): [k, c] 接到盒子的同时拆开, 给两个零件起有意义的名字
     for (auto& [k, c] : freq) printf("[新写法] 词频 %s = %d\n", k.c_str(), c);
+
+    // ---- §C04.3.2 "红黑树有序": 同样数据, map vs unordered_map 遍历顺序对照 ----
+    // 用 3 个乱序 key 演示(2 个 key 时可能碰巧同序, 不够说明问题)
+    std::map<std::string, int> om;
+    std::unordered_map<std::string, int> uom;
+    for (auto& [k, v] : {std::pair<std::string,int>{"cherry",3},
+                         {"apple",1}, {"banana",2}}) { om[k] = v; uom[k] = v; }
+    printf("map 遍历(乱序插 cherry/apple/banana):    ");
+    for (auto& [k, c] : om) printf("%s ", k.c_str());
+    printf(" <- 永远按 key 排好序(内部是二叉搜索树)\n");
+    printf("unordered_map 遍历(同样数据):           ");
+    for (auto& [k, c] : uom) printf("%s ", k.c_str());
+    printf(" <- 顺序不定, 跟哈希有关(内部是哈希表)\n");
+    // 有序的超能力: 一步找到第一个 >= 某值的键 (unordered_map 没有这能力)
+    auto it2 = om.lower_bound("b");   // 第一个 >= "b" 的键应是 banana
+    printf("map.lower_bound(\"b\") = %s  (第一个 >= b 的键)\n", it2->first.c_str());
 
     // ---- priority_queue: TopK 思路 ----
     std::priority_queue<int> pq;
