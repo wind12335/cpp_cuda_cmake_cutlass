@@ -80,6 +80,18 @@ int main() {
     auto it2 = om.lower_bound("b");   // 第一个 >= "b" 的键应是 banana
     printf("map.lower_bound(\"b\") = %s  (第一个 >= b 的键)\n", it2->first.c_str());
 
+    // ---- §C04.5.1 pair vs map: 一个盒子 vs 一柜子盒子 ----
+    std::pair<std::string, int> one = {"gpu", 8};   // pair: 就一对, 塞不进第二对
+    printf("pair 一个盒子: %s x%d\n", one.first.c_str(), one.second);
+    // map many(前面 om): 装了 3 对还能按 key 查 —— map 里每格元素就是 pair:
+    for (auto& p : om)   // p 的类型: pair<const string,int> (老朋友, .first/.second)
+        printf("map 柜子里的一格: %s -> %d\n", p.first.c_str(), p.second);
+    // pair 的主场: 函数一次返回两个值 (std::minmax_element 官方就返回 pair<迭代器,迭代器>)
+    int arr[] = {5, 2, 9, 1};
+    auto [loit, hiit] = std::minmax_element(std::begin(arr), std::end(arr));
+    printf("minmax_element 一次带回两个: lo=%d hi=%d (解引用迭代器取值)\n", *loit, *hiit);
+    // ⚠️ 顺带记住: std::minmax(a, b) 只比较"两个值"; 比"一段范围"要用 minmax_element
+
     // ---- priority_queue: TopK 思路 ----
     std::priority_queue<int> pq;
     for (int e : {3, 9, 1, 7}) pq.push(e);
