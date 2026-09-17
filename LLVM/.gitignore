@@ -1,0 +1,9 @@
+# 两个只读大仓库不进 git（自己 git clone --depth 1 即可，见 README）
+llvm-project/
+buddy-mlir/
+# 编译产物
+labs/*/build/
+*.o
+*.ll
+*.s
+matmul_bin
