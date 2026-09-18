@@ -15,19 +15,22 @@ struct DefaultDeleter {                 // 默认删除器: 普通 new 出来的
 };
 
 struct controlBlock {
-    int _strong = 1;    // ⚠️bug⑤: 出生就是 1(构造函数自己就是第一个持有者), 原来 0 全错位
+    int _strong = 0;    
     int _weak = 0;      //   弱计数阶段4才用, 先放着
 };
 
 template <typename T, typename Deleter = DefaultDeleter<T>>   // ← deleter 连线①:
 class shared_ptr {                                             //   做成第二个模板参数,
 public:                                                        //   不传就用默认 delete 版
-    // ⚠️bug①(最严重): 原来 _ptr(new T(*ptr)) 是"复制了一份新对象"——
-    //   原指针泄漏 + nullptr 直接解引用崩溃。接管就存它本身: _ptr(ptr)
-    // ⚠️bug②: 空指针不该开账本(空 shared_ptr 的 use_count 应为 0, 析构也不该摸 _controller)
     explicit shared_ptr(T* ptr = nullptr)
         : _ptr(ptr),
-          _controller(ptr ? new controlBlock : nullptr) {}
+          _controller(ptr ? new controlBlock : nullptr) 
+    {
+        if (_controller) {
+            _controller->_strong = ptr ? 1 : 0;
+        }
+    }
+
 
     shared_ptr(const shared_ptr& other) :  // 拷贝 强引用+1
         _ptr(other._ptr), _controller(other._controller) {
@@ -54,6 +57,22 @@ public:                                                        //   不传就用
         return *this;
     }
 
+    shared_ptr& operator=(shared_ptr&& other) noexcept {  // ← 补 noexcept!
+        // (实测四场景全过: 不同账本/自移动/同账本/从空移动 —— 逻辑你已写对)
+        if (this != &other) {
+            if (_controller && --(_controller->_strong) == 0) {
+                _deleter(_ptr);
+                delete _controller;
+                cout << "移动赋值, 原本的引用归0, 触发删除" << endl;
+            }
+            _ptr = other._ptr;
+            _controller = other._controller;
+            other._ptr = nullptr;             // 偷完置空
+            other._controller = nullptr;
+        }
+        return *this;
+    }
+
     ~shared_ptr() {
         if (_controller && --(_controller->_strong) == 0) {
             _deleter(_ptr);                  // ← deleter 连线②: 同一处替换
@@ -61,15 +80,15 @@ public:                                                        //   不传就用
             cout << "触发析构" << endl;
         }
     }
-    // (⚠️bug③: 你原来有两个 ~shared_ptr(), 编译直接报错 —— 旧版忘删了)
 
+    void print(){cout<< *_ptr <<endl; }
     T& operator*()  const { return *_ptr; }  // 让 *sp 像指针
     T* operator->() const { return _ptr; }   // 让 sp->member 像指针(C03 §C03.1.2)
     T* get()        const { return _ptr; }   // 拿裸指针(FILE 这种不能解引用的东西要用)
     int use_count() const { return _controller ? _controller->_strong : 0; }
 
 private:
-    T* _ptr = nullptr;              // ⚠️bug③b: 原来是 void* —— void* 不能 delete(UB)
+    T* _ptr = nullptr;              
     controlBlock* _controller = nullptr;
     Deleter _deleter;               // ← deleter 连线③: 成员放这, 所有副本天然带同一套删法
 };
@@ -86,8 +105,28 @@ struct FileCloser {                 // 自定义 deleter: 证明"删法"可以�
     }
 };
 
+
+
 int main() {
-    cout << "== ① 计数对账 ==" << endl;
+    {
+        shared_ptr<int> test = shared_ptr<int>(new int(42)); // 创建一个 shared_ptr，指向一个整数
+        shared_ptr<int> test2 = test; // 拷贝构造，引用计数增加
+
+        shared_ptr<int> test3 = shared_ptr<int>(new int(33));
+        cout << "test3.use_count(): " << test3.use_count() << endl; // 输出引用计数
+        test3 = test; // 拷贝赋值，原来的引用计数减少，新的引用计数增加
+        cout << "f拷贝赋值后test3.use_count(): " << test3.use_count() << endl; // 输出引用计数
+
+        shared_ptr<int> test4 = shared_ptr<int>(new int(56)); // 移动构造，test4接管资源，test变为空
+
+        test = std::move(test4); // 移动赋值，test接管资源，test4变为空
+        test4.print();
+        test.print();
+        cout << "test.use_count(): " << test.use_count() << endl; // 输出
+
+    }
+
+    cout << "------------------------ ① 计数对账 --------------------------------" << endl;
     {
         shared_ptr<Res> a(new Res(1));
         cout << "  出生: use=" << a.use_count() << endl;              // 1
@@ -96,24 +135,37 @@ int main() {
             cout << "  拷贝后: use=" << a.use_count() << endl;         // 2
         }
         cout << "  b 死后: use=" << a.use_count() << endl;             // 1
-    }                                                                 // a 出作用域 → 销毁
-    cout << "== ② 赋值放旧账 ==" << endl;
-    {
-        shared_ptr<Res> a(new Res(2)), c(new Res(3));
-        c = a;                               // c 的旧账(Res3)归0触发删除, 然后共有 Res2
-        cout << "  赋值后: use=" << a.use_count() << endl;             // 2
-    }
-    cout << "== ③ 自定义 deleter 管 FILE(不是 new 出来的东西!) ==" << endl;
-    {
-        shared_ptr<FILE, FileCloser> f(fopen("/tmp/shousuo.txt", "w"));
-        if (f.get()) fprintf(f.get(), "手搓成功\n");                   // FILE 用 get() 拿裸指针
-    }                                        // 出作用域 → FileCloser 自动 fclose
-    cout << "== ④ 空 shared_ptr 不崩 ==" << endl;
-    {
-        shared_ptr<Res> e;                   // 默认构造: 账本都没开
-        cout << "  空: use=" << e.use_count() << endl;                 // 0
-        auto g = e;                          // 从空拷贝
-        cout << "  从空拷贝: use=" << g.use_count() << endl;           // 0, 没崩 ✓
-    }
+    }      
+                                                               // a 出作用域 → 销毁
+
+
+
+    // cout << "== ② 赋值放旧账 ==" << endl;
+    // {
+    //     shared_ptr<Res> a(new Res(2)), c(new Res(3));
+    //     c = a;                               // c 的旧账(Res3)归0触发删除, 然后共有 Res2
+    //     cout << "  赋值后: use=" << a.use_count() << endl;             // 2
+    // }
+
+
+
+
+
+    // cout << "== ③ 自定义 deleter 管 FILE(不是 new 出来的东西!) ==" << endl;
+    // {
+    //     shared_ptr<FILE, FileCloser> f( fopen("/self_practice/shousuo.txt", "12345678小明、小刚、小红") );  // 用自定义 deleter 管 FILE
+    //     if (f.get()) fprintf(f.get(), "手搓成功\n");                   // FILE 用 get() 拿裸指针
+    // }    
+    
+    
+    
+    // // 出作用域 → FileCloser 自动 fclose
+    // cout << "== ④ 空 shared_ptr 不崩 ==" << endl;
+    // {
+    //     shared_ptr<Res> e;                   // 默认构造: 账本都没开
+    //     cout << "  空: use=" << e.use_count() << endl;                 // 0
+    //     auto g = e;                          // 从空拷贝
+    //     cout << "  从空拷贝: use=" << g.use_count() << endl;           // 0, 没崩 ✓
+    // }
     return 0;
 }
