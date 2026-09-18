@@ -81,7 +81,11 @@ public:                                                        //   不传就用
         }
     }
 
-    void print(){cout<< *_ptr <<endl; }
+    // ⚠️ 原版 cout << *_ptr 遇到空指针直接段错误(被 move 掏空的对象/空对象)!
+    void print() const {
+        if (_ptr) cout << *_ptr << endl;
+        else      cout << "(空)" << endl;
+    }
     T& operator*()  const { return *_ptr; }  // 让 *sp 像指针
     T* operator->() const { return _ptr; }   // 让 sp->member 像指针(C03 §C03.1.2)
     T* get()        const { return _ptr; }   // 拿裸指针(FILE 这种不能解引用的东西要用)
@@ -117,9 +121,11 @@ int main() {
         test3 = test; // 拷贝赋值，原来的引用计数减少，新的引用计数增加
         cout << "f拷贝赋值后test3.use_count(): " << test3.use_count() << endl; // 输出引用计数
 
-        shared_ptr<int> test4 = shared_ptr<int>(new int(56)); // 移动构造，test4接管资源，test变为空
+        shared_ptr<int> test4 = shared_ptr<int>(new int(56)); 
 
-        test = std::move(test4); // 移动赋值，test接管资源，test4变为空
+        test = test4; // 【其实是拷贝赋值!】test4 是左值 → 走 operator=(const shared_ptr&)
+                     // 想走移动赋值必须写 test = std::move(test4);
+                     // 两种都合法, 区别: 拷贝后 test4 还有内容(use=2); 移动后 test4 被掏空
         test4.print();
         test.print();
         cout << "test.use_count(): " << test.use_count() << endl; // 输出
