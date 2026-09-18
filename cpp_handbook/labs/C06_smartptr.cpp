@@ -4,6 +4,13 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <cstdlib>
+
+// §C06.5 计数器: 数"到底分配了几次堆"
+static int allocs = 0;
+void* operator new(size_t sz) { ++allocs; return std::malloc(sz); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, size_t) noexcept { std::free(p); }
 
 // 一个会"报账"的资源类: 观察 unique/shared/weak 各自何时创建销毁
 struct Res {
@@ -81,6 +88,15 @@ int main() {
             printf("  循环内 lock() 成功看到 %s\n", locked->name.c_str());
     }
     printf("  weak 互指出作用域后:   alive=%d (正确析构)\n", GoodNode::alive);
+
+    // ---- §C06.5 直构 vs make_*: 数堆分配次数(重载 operator new 计数, 函数在上方) ----
+    printf("== 直构 vs make_* 堆分配计数 ==\n");
+    allocs = 0;
+    { std::shared_ptr<Res> s(new Res(88)); }
+    printf("  直构 shared_ptr: %d 次\n", allocs);
+    allocs = 0;
+    { auto s = std::make_shared<Res>(89); }
+    printf("  make_shared:     %d 次 (对象+控制块打包成一块)\n", allocs);
 
     // ---- 实战: 自定义删除器管"非 new 资源"(CUDA 语境的前置) ----
     printf("== 自定义删除器 ==\n");

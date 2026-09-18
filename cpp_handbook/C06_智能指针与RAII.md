@@ -196,7 +196,49 @@ printf("%d", Node::alive);           // 实测打印 2 —— 两个对象永不
 
 **记忆钩子**："shared 断循环，一端换 weak；用前先 lock()，死了拿空来。"
 
-## §C06.5 选择标准（面试必背）
+## §C06.5 直构 vs make_*：五种创建姿势对照（手搓前必看）
+
+**直构** = 自己写 `new` 塞给构造函数；**make** = 工厂函数替你 new。weak_ptr 没有工厂，只能从 shared_ptr 生。
+
+```cpp
+// ── unique_ptr ──
+std::unique_ptr<int> u1(new int(42));      // 直构(单值): 能用, 但裸露 new
+auto u2 = std::make_unique<int>(42);       // 工厂(单值): 推荐, 一行不裸 new
+std::unique_ptr<int[]> u3(new int[100]);   // 直构(数组): 类型要写全 int[]
+auto u4 = std::make_unique<int[]>(100);    // 工厂(数组): 推荐, 自动清零
+
+// ── shared_ptr ──
+std::shared_ptr<int> s1(new int(42));      // 直构: 【2 次堆分配】对象一次+控制块一次
+auto s2 = std::make_shared<int>(42);       // 工厂: 【1 次堆分配】对象+控制块打包成一块
+std::shared_ptr<FILE> f(fopen(...),        // 自定义 deleter: 只能直构!
+                        [](FILE* p){ if (p) fclose(p); });
+
+// ── weak_ptr ──
+std::weak_ptr<int> w = s2;                 // 没有 make_weak! 只能从 shared 生
+if (auto sp = w.lock()) { /* 活着: sp 是借来的 shared_ptr */ }
+if (w.expired()) { /* 死了 */ }             // 另一个常用查询: 还活着吗
+```
+
+**堆分配次数实测**（重载 operator new 计数，lab 里有完整版）：
+
+| 写法 | 堆分配次数 | 说明 |
+|---|---|---|
+| `unique_ptr<T>(new T)` | 1 | 和 make_unique 一样 |
+| `make_unique<T>()` | 1 | |
+| `shared_ptr<T>(new T)` | **2** | 对象、控制块分开开两块 |
+| `make_shared<T>()` | **1** | 对象+控制块**打包成一块**（更快、缓存更友好） |
+| `weak_ptr w = s` | 0 | 纯观察，不开内存 |
+
+**选型口诀**：
+- 普通 new 出来的对象 → **make 优先**（少一次分配 + 异常安全 + 不见裸 new）
+- 带**自定义 deleter** 的资源（FILE/cudaFreeHost/cudaFree）→ **只能直构**（make 不收 deleter）
+- 数组 → make_unique<T[]>（C++17 下 make_shared 不支持数组，C++20 才有）
+
+【延伸，手搓 shared_ptr 时会懂】make_shared 打包的副作用：只要还有 weak_ptr 活着，
+**整块内存（含对象那部分）都不能还**（对象和控制在同一块，拆不开）；直构版则对象先还、
+控制块等 weak 死光再还。你手搓时用"对象、控制块分开开"的直构版结构，更好写。
+
+## §C06.6 选择标准（面试必背）
 
 1. **默认 unique_ptr**——独占是常态，零开销；
 2. 确需共享所有权才升级 shared_ptr（注意：**循环引用要用 weak_ptr 断开**）；
