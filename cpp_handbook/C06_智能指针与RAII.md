@@ -232,7 +232,11 @@ if (w.expired()) { /* 死了 */ }             // 另一个常用查询: 还活�
 **选型口诀**：
 - 普通 new 出来的对象 → **make 优先**（少一次分配 + 异常安全 + 不见裸 new）
 - 带**自定义 deleter** 的资源（FILE/cudaFreeHost/cudaFree）→ **只能直构**（make 不收 deleter）
-- 数组 → make_unique<T[]>（C++17 下 make_shared 不支持数组，C++20 才有）
+- 数组 → `make_unique<T[]>`（C++14 起有）。**注意：`make_shared<T[]>` 任何标准版本都没有**
+  （C++17/20/23 都没收录，GCC 会在 C++20 模式下仍报 `static assertion failed:
+  make_shared<T[]> not supported`）——要共享数组：直构 `std::shared_ptr<char[]>(new char[10])`
+  （`shared_ptr<T[]>` **类型**本身 C++17 就支持，会正确调 `delete[]`），或干脆用
+  `vector<char>` / `string`（Rule of Zero，通常最佳）。
 
 【延伸，手搓 shared_ptr 时会懂】make_shared 打包的副作用：只要还有 weak_ptr 活着，
 **整块内存（含对象那部分）都不能还**（对象和控制在同一块，拆不开）；直构版则对象先还、
