@@ -101,20 +101,20 @@ void speak_twice_static(A& a) { a.speak(); a.speak(); }
 void speak_twice_virtual(VAnimal& a) { a.speak(); a.speak(); }
 
 int main(){
-    std::cout << "== CRTP + 仿函数(编译期分发) ==" << std::endl;
+    // std::cout << "== CRTP + 仿函数(编译期分发) ==" << std::endl;
     Dog dog("旺财");
-    dog.name_impl();
-    dog();                    // operator(): 基类转发到派生类的仿函数
+    // dog.name_impl();
+    // dog();                    // operator(): 基类转发到派生类的仿函数
     Cat cat;
-    cat();
+    // cat();
 
-    std::cout << "== forward 的优势在工厂函数里显现 ==" << std::endl;
-    std::string my_name = "来福";                  // 左值(我还要用)
-    auto d1 = make_animal<Dog>(my_name);           // 传左值 → 名字【拷贝】进来, my_name 还能用
-    std::cout << "  my_name 还在: " << my_name << std::endl;
-    auto d2 = make_animal<Dog>(std::string("小黑")); // 传右值(临时) → 名字【移动】进来, 零拷贝!
-    d1->speak();
-    d2->speak();
+    // std::cout << "== forward 的优势在工厂函数里显现 ==" << std::endl;
+    // std::string my_name = "来福";                  // 左值(我还要用)
+    // auto d1 = make_animal<Dog>(my_name);           // 传左值 → 名字【拷贝】进来, my_name 还能用
+    // std::cout << "  my_name 还在: " << my_name << std::endl;
+    // auto d2 = make_animal<Dog>(std::string("小黑")); // 传右值(临时) → 名字【移动】进来, 零拷贝!
+    // d1->speak();
+    // d2->speak();
 
     // ═══ virtual 的独门绝技: 容器混装(CRTP 做不到!) ═══
     //    Animals<Dog> 和 Animals<Cat> 是两个【不相干的类型】→ 放不进同一个 vector;
@@ -128,8 +128,11 @@ int main(){
 
     std::cout << "== 双接口对照(同样写 a.speak(), 绑定时机不同) ==" << std::endl;
     std::cout << "模板接口(编译期):" << std::endl;
-    speak_twice_static(dog);        // 进的是 CRTP 版 Dog: 编译期就把 Dog::speak 焊死
-    speak_twice_static(*zoo[0]);    // 进的是 VDog: 注意!模板版拿具体类型时也会编译期绑定
+    speak_twice_static(dog);        // 进的是 CRTP 版 Dog: 静态类型是 Dog → 编译期焊死
+    speak_twice_static(*zoo[0]);    // ⚠️实测 A 推导成 VAnimal(不是 VDog!)——模板推导只看
+                                    //   【静态类型】(*zoo[0] 字面是 VAnimal&), 内部 speak 仍是
+                                    //   虚调用。想编译期绑定, 静态类型必须是具体类型。
+                                    //   口诀: 模板看静态类型, virtual 认动态类型
     std::cout << "虚接口(运行期):" << std::endl;
     speak_twice_virtual(*zoo[0]);   // 通过基类引用进 → 每次调用运行期查 vtable
     speak_twice_virtual(*zoo[1]);
