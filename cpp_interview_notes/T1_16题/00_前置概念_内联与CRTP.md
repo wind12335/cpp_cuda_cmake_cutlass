@@ -107,6 +107,32 @@ PyTorch 全栈就是这个套路：**外层** dispatcher 用 virtual/运行期�
 粗分发；**内层**选中的 kernel 全是模板，吃掉"每个元素一次"的细粒度。
 一天分发几百次的事用 virtual，一秒分发几十亿次的事用模板——**频率 × 单位成本**决定生死。
 
+**两种多态能融合吗？能——外虚内模就是融合**（实测可跑）：
+
+```cpp
+struct VAnimal {
+    virtual void speak() = 0;               // 外层 virtual: 运行期挑"是谁"(每只动物一次)
+    virtual ~VAnimal() = default;
+};
+template <class F>                          // 内层模板: 编译期内联(每元素零开销)
+void repeat3(F f) { for (int i = 0; i < 3; ++i) f(i); }
+struct VDog : VAnimal {
+    void speak() override { repeat3(Say{"汪"}); }   // 虚分发一次 → 内部模板热循环
+};
+// zoo 混装 VDog/VCat, for 循环 a->speak() —— 运行期挑"谁", 选中后内部的模板代码已内联好
+```
+
+另一种融合是 **std::function（类型擦除）**：模板构造边界（任何可调用物都能装）+
+内部函数指针/虚机制（运行期统一调用）——**用模板做出 virtual 的外观**。
+
+**唯一的硬限制（实测报错原文）**：虚函数本身不能是模板——
+
+```cpp
+template<class T> virtual void f() = 0;   // ✗ error: templates may not be 'virtual'
+```
+
+原因：vtable 的条目数量编译期必须定死，而模板能实例化出**无穷多个**版本，表没法建。
+
 #### 实测插曲：CPU 上 virtual 到底多贵？（诚实版）
 
 在 CPU 上做"1 亿次热循环 virtual vs 模板"对照，两次都**没拉开差距**（实测）：
