@@ -57,7 +57,10 @@ int main() {
     // ---- weak_ptr: 观察(不加强计数) + 死后 lock 给空 ----
     printf("== weak_ptr ==\n");
     std::weak_ptr<Res> w = s;
-    printf("  观察: 强=%ld 弱=%ld\n", s.use_count(), w.use_count());
+    // ⚠️ 注意: w.use_count() 查的也是【强】计数(和 s.use_count() 一样)!
+    //         标准【没有】查询弱计数的接口 —— 弱计数只在控制块内部记账(决定控制块何时销毁)
+    printf("  观察: s.use_count()=%ld, w.use_count()=%ld (两者相同, 都是强计数)\n",
+           s.use_count(), w.use_count());
     if (auto sp = w.lock()) printf("  lock 成功: 对象活着\n");
     s.reset();                                  // 对象销毁
     printf("  对象已销毁, 再 lock: %s\n", w.lock() ? "成功" : "失败(返回空)");
