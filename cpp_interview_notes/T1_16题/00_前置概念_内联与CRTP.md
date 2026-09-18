@@ -71,10 +71,50 @@ Dog d; d.speak();   // 编译期确定调 Dog::speak_impl 且已内联 —— �
 | 代码体积 | 一份实现共用 | 每个实例化各一份（膨胀） |
 | 典型用户 | PyTorch dispatcher | CUB/Thrust functor、Eigen |
 
-### 选择标准
+### 选择标准：先问两个问题，再看场景清单
 
-需要"运行期才决定类型、容器混装" → **virtual**（每层/op 分发一次，成本可摊薄）；
-类型编译期已知、热路径零开销 → **CRTP/模板**（CUDA 里 functor 进 kernel 必须走这条路，
-否则逐元素虚分发 = 每元素一次显存间接读，kernel 直接报废）。
+**判定问题①：这个类型，编译的时候知道吗？** 不知道（运行期才定）→ 只能 virtual。
+**判定问题②：分发的粒度多细？** 每个数据元素一次（尤其 GPU）→ 必须模板；每个任务/请求/图节点一次 → virtual 无所谓。
+
+#### virtual 的场景（运行期才知道类型 + 分发不细）
+
+1. **算子图执行引擎**（推理框架内核）：计算图从模型文件加载，GEMM/ATTN/COMM 节点
+   **混装**在 `vector<unique_ptr<Op>>` 里逐个 `run()`——节点类型加载图时才知道，
+   每节点分发一次。你课题里的"领域大模型计算图"就是这个形态。实测混装能力：
+
+   ```cpp
+   std::vector<std::unique_ptr<Op>> pipeline;   // 一个容器混三种不同算子
+   pipeline.push_back(std::make_unique<ScaleV>());
+   pipeline.push_back(std::make_unique<AddV>());   // ← CRTP/模板做不到: 类型不同放不进同一容器
+   for (auto& op : pipeline) x = op->apply(x);     // 运行期逐个分发 ✓
+   ```
+2. **PyTorch dispatcher**：`aten::mm` 被调用的那一刻才知道 device/dtype → 运行期挑注册实现。每个 op 分发一次。
+3. GUI/游戏实体、插件系统、测试 mock——事件驱动，人手速级频率，性能无关紧要。
+
+#### 模板/CRTP 的场景（编译期已知 + 每元素粒度）
+
+1. **CUDA kernel 里的 functor**（CUB/Thrust/CUTLASS epilogue）：functor 类型编译期定死 →
+   `operator()` 内联进 kernel。**若用 virtual：每个 thread 每个元素一次虚分发 = 一次
+   vptr 显存间接读（几百 cycle）+ GPU 没有乱序执行帮你藏 → kernel 直接报废**（X03 主角）。
+2. **CUTLASS `GemmShape<128,128,32>`**：tile 常数编进类型 → 循环完全展开、寄存器静态分配。
+3. `std::sort` 传 functor vs C 的 `qsort` 传函数指针：functor 内联进排序内循环（函数指针不可内联）。
+4. Eigen 表达式模板：`A*B+C` 编译期融合成单循环、零临时矩阵。
+5. 你写 mma 时的 `__forceinline__ + template<int M,N,K>` 包装。
+
+#### 工业界标配：混血架构（外虚内模）
+
+PyTorch 全栈就是这个套路：**外层** dispatcher 用 virtual/运行期注册做"每个 op 一次"的
+粗分发；**内层**选中的 kernel 全是模板，吃掉"每个元素一次"的细粒度。
+一天分发几百次的事用 virtual，一秒分发几十亿次的事用模板——**频率 × 单位成本**决定生死。
+
+#### 实测插曲：CPU 上 virtual 到底多贵？（诚实版）
+
+在 CPU 上做"1 亿次热循环 virtual vs 模板"对照，两次都**没拉开差距**（实测）：
+第一次被**浮点依赖链**掩盖（乱序执行把虚调用开销藏进浮点延迟）；
+第二次被 **GCC 去虚化**直接消除（编译器看穿了真实类型，虚调用变直调）。
+结论恰好说明：**CPU 上偶尔虚一次根本不疼，硬件和编译器到处帮你藏**。
+真正的生死线在两处：**GPU**（无乱序执行 + vptr 在显存，每元素虚分发=灾难）和
+**优化墙**（虚调用不可内联 → 编译器看不见函数体 → 向量化/常量传播全断，
+这才是 01_exp 量出 0.91 vs 0.18ns 的机制根源）。
 
 实测对照见 `01_exp_虚调用成本.cpp`；虚调用机制本体见 `01_虚函数与多态.md`。
