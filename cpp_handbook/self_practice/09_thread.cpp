@@ -1,32 +1,35 @@
 #include<thread>
 #include<mutex>
 #include<atomic>
-
+#include<functional>   // std::ref 的家
 #include<iostream>
 
+// ── 坑①: 你原来把 x_add 写在 test_thread【里面】——
+//    报错: error: a function-definition is not allowed here before '{' token
+//    原因: C++ 禁止"函数体内再定义函数"(嵌套函数不存在)。函数只能定义在
+//    文件作用域(像现在这样)或类里面。lambda 是唯一能"在函数里写函数体"的东西。
+void x_add(int& x){                    // 外置函数碰外面的数据, 只能靠参数传引用
+    for( ; x<200; x++){                // (普通函数没有捕获列表! 那是 lambda 独有的)
+        std::cout<<"x:"<<x<<std::endl;
+    }
+}
 
 void test_thread(){
-    int x = 0;
+    int x = 0;                         // 家在 main 线程栈的栈帧里(§C09.1.2)
     int y = 100;
 
-    // ── 报错原因: 'x' is not captured ──
-    // lambda 的 [] 是【捕获列表】(C02 §C02.7): 声明"我要带哪些外面的变量进来"
-    //   []  = 空列表 = "外面的东西我什么都不要" → 里面写 x++ 时, 编译器:
-    //         "你没申请带 x, 凭什么用它?" → 直接拒绝编译
-    //   [&] = 按引用捕获 = "把外面的 x 本尊牵进来" → x++ 改的就是外面那个 x ✓
-    //   [=] = 按值捕获 = "复印一份 x 进来" → 改的是复印件, 外面 x 纹丝不动(这里用错!)
-    // 线程要改的就是外面的 x 本尊, 所以要 [&]
-    // 顺带: std::thread t1 = std::thread(...) 右边那个显式构造是多余的(能编,靠移动),
-    //       直接 std::thread t1(...) 即可 —— 下面保留你的写法, 只是标一下
-    std::thread  t1 = std::thread([&]{x++;});   // [&]: 线程里改外面的 x 本尊
-    std::thread  t2 = std::thread([&]{y--;});   // 同理 y
+    // ── 坑②: std::thread 传参【默认拷贝一份】再传给函数 ──
+    //    就算函数签名是 int&, 直接写 x 也会编译错(实测):
+    //    "std::thread arguments must be invocable after conversion to rvalues"
+    //    解法: std::ref(x) = "把 x 的引用打包, 告诉 thread 别拷贝, 传本尊"
+    std::thread t1(x_add, std::ref(x));            // x 走外置函数(引用参数)
+
+    std::thread t2([&]{for(y ; y>95; y--){std::cout<<"y:"<<y<<std::endl;}});  // y 走 lambda([&]捕获)
     t1.join();
     t2.join();
-    // 提示: join 之后在下面加一行 std::cout << x << " " << y;
-    //      (iostream 你已包含) 就能看到 1 99 —— 不加的话跑了也看不到效果
+    std::cout << "最终 x=" << x << " y=" << y << std::endl;
 }
 
 int main(){
-
     test_thread();
 }
