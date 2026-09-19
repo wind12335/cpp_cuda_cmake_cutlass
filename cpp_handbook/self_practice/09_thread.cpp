@@ -24,12 +24,26 @@ void test_thread(){
     //    解法: std::ref(x) = "把 x 的引用打包, 告诉 thread 别拷贝, 传本尊"
     std::thread t1(x_add, std::ref(x));            // x 走外置函数(引用参数)
 
-    std::thread t2([&]{for(y ; y>95; y--){std::cout<<"y:"<<y<<std::endl;}});  // y 走 lambda([&]捕获)
+    std::thread t2([&]{for(y ; y>-5; y--){std::cout<<"y:"<<y<<std::endl;}});  // y 走 lambda([&]捕获)
     t1.join();
     t2.join();
+    // ── 修复: 原来写成 std::thread(std::this_thread::get_id()) ──
+    //   那是在"用 id 构造一个新线程对象"(thread 的构造函数要的是【可调用的函数】,
+    //   thread::id 不是函数) → 编译错 no matching function for call to 'std::thread(...)'
+    // 正确写法: cout 能直接打印 thread::id (它支持 <<; printf 才需要先 hash 成数字)
+    // 输出的是【谁】? = 此刻正在执行这行代码的线程 = main!
+    //   (join 之后回到 main 线程继续跑; t1/t2 已经结束被回收, 不是它们的 id)
+    // 想要 t1/t2 的 id: ① 在 x_add/lambda【体内】调 this_thread::get_id()
+    //                   ② 或 join 之前在外面调 t1.get_id()
+    std::cout<< "main线程id: " << std::this_thread::get_id() << std::endl;
     std::cout << "最终 x=" << x << " y=" << y << std::endl;
 }
 
+void test_mutexthread(){
+    std::mutex<std::thread> mt;
+    std::thread t1();
+    std::thread t2();
+}
 int main(){
     test_thread();
 }
