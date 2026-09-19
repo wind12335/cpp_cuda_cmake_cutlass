@@ -80,6 +80,45 @@ Grid（一次 kernel 启动的全部线程）
 
 【前置：C09 并发】第 3 步"异步立即返回"意味着 **CPU 计时不准**——要用 event（G06）。
 
+### §G01.5.1 "有了 UVA/UVM 还标注方向干嘛？"——三个概念拆干净（实测）
+
+读了通信综述（R01 Landscape）常生此问。先分清**三个不同层面的东西**：
+
+| 概念 | 管什么 | 一句话 |
+|---|---|---|
+| **方向参数**（H2D/D2H/D2D）| cudaMemcpy 的调用姿势 | 标"这次拷贝往哪边搬" |
+| **UVA**（统一虚拟地址，CUDA 4.0 起）| **地址空间** | host+所有 GPU 共用一套地址 → 运行时**能从指针值推断方向**，也是 P2P 直访的前提 |
+| **UVM/managed**（cudaMallocManaged）| **数据住在哪** | 一份数据 host/device **自动迁移**，kernel 可直接解引用 |
+
+**实测两个事实（4060 上跑通）**：
+
+```cpp
+// ① 方向参数确实可省——UVA 让运行时从指针推断:
+cudaMemcpy(d, h, n, cudaMemcpyDefault);   // ✓ 不标 H2D, 推断正确
+
+// ② "完全不用拷贝、直接 load/store"的世界存在——UVM:
+float* m;  cudaMallocManaged(&m, n);
+for (i) m[i] = ...;            // host 直接写
+kernel<<<...>>>(m);            // kernel 直接读改(全程没有 cudaMemcpy)
+cudaDeviceSynchronize();       // ⚠️ 回 host 前必须同步
+```
+
+**那为什么 G01.5 的经典生命周期还教方向标注？三个理由**：
+
+1. **显式拷贝仍是生产主流**：PyTorch/CUTLASS/NCCL 内部全是显式 H2D/D2H + pinned——
+   可控、可预测、好流水线化；UVM 的自动迁移靠**缺页中断**搬页，访问模式不好会
+   "缺页风暴"，性能不可控；
+2. **UVM 是"藏起来了"不是"没有了"**：managed 指针背后数据照样在 host RAM 和 HBM 间
+   搬，只是运行时替你搬——计费单还在，只是不给你看；
+3. **综述说的 direct load/store 是另一个东西**：R01 论文语境里那是指**多卡 P2P**——
+   GPU0 的 kernel 解引用**指向 GPU1 显存**的指针（需 UVA + `cudaDeviceEnablePeerAccess`，
+   ⑤型 NVSHMEM 的地基）。**同名词，两含义**：UVM 的直访是"host↔本卡"，综述的直访是
+   "本卡 kernel↔他卡显存"。G01.5 讲单卡生命周期，与综述的多卡分类法**是两个层面**，
+   都要学、互不替代。
+
+**记忆钩子**："**方向参数是姿势（可省），UVA 是地址（推断+P2P 的地基），UVM 是搬家
+（自动但不可控）；综述的直访在卡间，手册的拷贝在卡内。**"
+
 ## 自测题（能答出才算读懂本章）
 
 1. 为什么"两个 block 之间不能通过 shared memory 通信"？
